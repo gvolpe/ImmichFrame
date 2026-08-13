@@ -98,11 +98,11 @@ General:
   ImageZoom: true  # boolean
   # Pans an image in a random direction and gives it a touch of life.
   ImagePan: false  # boolean
-  # Whether image should fill available space. Aspect ratio maintained but may be cropped.
+  # Whether landscape images and split-view portrait images should fill available space. Aspect ratio is maintained but may be cropped.
   ImageFill: false  # boolean
   # Whether to play audio for videos that have audio tracks.
   PlayAudio: false  # boolean
-  # Allow two portrait images to be displayed next to each other
+  # Allows two portrait images to be displayed next to each other. Landscape images are displayed in single view. Portrait images are not shown as single slides.
   Layout: 'splitview'  # single | splitview
 
 # multiple accounts permitted

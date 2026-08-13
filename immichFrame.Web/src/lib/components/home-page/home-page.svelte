@@ -15,6 +15,7 @@
 	import { page } from '$app/state';
 	import { ProgressBarLocation, ProgressBarStatus } from '../elements/progress-bar.types';
 	import { isImageAsset, isVideoAsset } from '$lib/constants/asset-type';
+	import { isLandscapeAsset, isPortraitAsset } from '$lib/utils';
 
 	interface AssetsState {
 		assets: [string, api.AssetResponseDto, api.AssetFaceResponseDto[], api.AlbumResponseDto[]][];
@@ -148,12 +149,30 @@
 			}
 
 			error = false;
-			assetBacklog = assetRequest.data.filter(
-				(asset) => isImageAsset(asset) || isVideoAsset(asset)
-			);
+			appendAssetBacklog(assetRequest.data);
 		} catch {
 			error = true;
 		}
+	}
+
+	function appendAssetBacklog(assets: api.AssetResponseDto[]) {
+		const knownIds = new Set([...displayingAssets, ...assetBacklog].map((asset) => asset.id));
+		const nextBacklog = [...assetBacklog];
+
+		for (const asset of assets) {
+			if (!isImageAsset(asset) && !isVideoAsset(asset)) {
+				continue;
+			}
+
+			if (knownIds.has(asset.id)) {
+				continue;
+			}
+
+			knownIds.add(asset.id);
+			nextBacklog.push(asset);
+		}
+
+		assetBacklog = nextBacklog;
 	}
 
 	let isHandlingAssetTransition = $state(false);
@@ -230,8 +249,22 @@
 			return;
 		}
 
-		const useSplit = shouldUseSplitView(assetBacklog);
-		const next = assetBacklog.splice(0, useSplit ? 2 : 1);
+		let next = takeNextAssets();
+		if (!error && !next.length) {
+			await loadAssets();
+			next = takeNextAssets();
+		}
+
+		if (error) {
+			return;
+		}
+
+		if (!next.length) {
+			error = true;
+			errorMessage =
+				'No displayable assets were found. Portrait images require another portrait image and the splitview layout.';
+			return;
+		}
 
 		if (displayingAssets.length) {
 			assetHistory.push(...displayingAssets);
@@ -251,8 +284,10 @@
 			return;
 		}
 
-		const useSplit = shouldUseSplitView(assetHistory.slice(-2));
-		const next = assetHistory.splice(useSplit ? -2 : -1);
+		const next = takePreviousAssets();
+		if (!next.length) {
+			return;
+		}
 
 		if (displayingAssets.length) {
 			assetBacklog.unshift(...displayingAssets);
@@ -263,29 +298,87 @@
 		assetsState = await pickAssets(next);
 	}
 
-	function isPortrait(asset: api.AssetResponseDto) {
-		if (isVideoAsset(asset)) {
-			return false;
+	function takeNextAssets() {
+		const first = assetBacklog[0];
+		if (!first) {
+			return [];
 		}
 
-		const isFlipped = (orientation: number) => [5, 6, 7, 8].includes(orientation);
-		let assetHeight = asset.exifInfo?.exifImageHeight ?? 0;
-		let assetWidth = asset.exifInfo?.exifImageWidth ?? 0;
-		if (isFlipped(Number(asset.exifInfo?.orientation ?? 0))) {
-			[assetHeight, assetWidth] = [assetWidth, assetHeight];
+		if (canUseSingleView(first)) {
+			return assetBacklog.splice(0, 1);
 		}
-		return assetHeight > assetWidth;
+
+		if (usesSplitViewLayout()) {
+			const pairWithFirst = findPortraitPairIndex(0);
+			if (pairWithFirst > 0) {
+				const second = assetBacklog.splice(pairWithFirst, 1)[0];
+				const first = assetBacklog.shift();
+				return first ? [first, second] : [];
+			}
+		}
+
+		const singleIndex = assetBacklog.findIndex(canUseSingleView);
+		const portraitPair = findFirstPortraitPair();
+
+		if (portraitPair && (singleIndex < 0 || portraitPair[0] < singleIndex)) {
+			const second = assetBacklog.splice(portraitPair[1], 1)[0];
+			const first = assetBacklog.splice(portraitPair[0], 1)[0];
+			return [first, second];
+		}
+
+		return singleIndex >= 0 ? assetBacklog.splice(singleIndex, 1) : [];
+	}
+
+	function takePreviousAssets() {
+		for (let i = assetHistory.length - 1; i >= 0; i--) {
+			const asset = assetHistory[i];
+			const previous = assetHistory[i - 1];
+
+			if (asset && previous && isPortraitAsset(asset) && isPortraitAsset(previous)) {
+				return assetHistory.splice(i - 1, 2);
+			}
+
+			if (asset && canUseSingleView(asset)) {
+				return assetHistory.splice(i, 1);
+			}
+		}
+
+		return [];
 	}
 
 	function shouldUseSplitView(assets: api.AssetResponseDto[]): boolean {
-		return (
-			$configStore.layout?.trim().toLowerCase() === 'splitview' &&
-			assets.length > 1 &&
-			isImageAsset(assets[0]) &&
-			isImageAsset(assets[1]) &&
-			isPortrait(assets[0]) &&
-			isPortrait(assets[1])
-		);
+		return assets.length === 2 && assets.every(isPortraitAsset);
+	}
+
+	function usesSplitViewLayout() {
+		return $configStore.layout?.trim().toLowerCase() === 'splitview';
+	}
+
+	function canUseSingleView(asset: api.AssetResponseDto) {
+		return isVideoAsset(asset) || isLandscapeAsset(asset);
+	}
+
+	function findPortraitPairIndex(firstIndex: number) {
+		if (!isPortraitAsset(assetBacklog[firstIndex])) {
+			return -1;
+		}
+
+		return assetBacklog.findIndex((asset, index) => index > firstIndex && isPortraitAsset(asset));
+	}
+
+	function findFirstPortraitPair(): [number, number] | null {
+		if (!usesSplitViewLayout()) {
+			return null;
+		}
+
+		for (let i = 0; i < assetBacklog.length; i++) {
+			const secondIndex = findPortraitPairIndex(i);
+			if (secondIndex > i) {
+				return [i, secondIndex];
+			}
+		}
+
+		return null;
 	}
 
 	function hasBirthday(assets: api.AssetResponseDto[]) {
@@ -342,7 +435,7 @@
 				assets: newAssets,
 				error: false,
 				loaded: true,
-				split: assets.length == 2 && assets.every(isImageAsset),
+				split: shouldUseSplitView(assets),
 				hasBday: hasBirthday(assets)
 			};
 		} catch {

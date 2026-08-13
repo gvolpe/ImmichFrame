@@ -6,7 +6,7 @@
 		type AssetFaceResponseDto
 	} from '$lib/immichFrameApi';
 	import { isVideoAsset } from '$lib/constants/asset-type';
-	import { decodeBase64 } from '$lib/utils';
+	import { decodeBase64, isLandscapeAsset, isPortraitAsset } from '$lib/utils';
 	import { thumbHashToDataURL } from 'thumbhash';
 	import AssetInfo from '$lib/components/elements/asset-info.svelte';
 	import ImageOverlay from '$lib/components/elements/imageoverlay/image-overlay.svelte';
@@ -84,6 +84,9 @@
 	let hasPerson = $derived((asset[1].people?.filter((x) => x.name).length ?? 0) > 0);
 	let zoomIn = $derived(zoomEffect());
 	let panDirection = $derived(panEffect());
+	let fillAsset = $derived(
+		imageFill && (isLandscapeAsset(asset[1]) || (split && isPortraitAsset(asset[1])))
+	);
 	const enableZoom = $derived(imageZoom && !isVideo);
 	const enablePan = $derived(imagePan && !isVideo);
 
@@ -240,7 +243,7 @@
 			<!-- Autoplay might be blocked by the browser when playAudio is enabled -->
 			<video
 				bind:this={videoElement}
-				class="{imageFill
+				class="{fillAsset
 					? 'w-screen max-h-screen h-dvh-safe object-cover'
 					: 'max-h-screen h-dvh-safe max-w-full object-contain'} w-full h-full"
 				src={asset[0]}
@@ -269,7 +272,7 @@
 			></video>
 		{:else}
 			<img
-				class="{imageFill
+				class="{fillAsset
 					? 'w-screen max-h-screen h-dvh-safe object-cover'
 					: 'max-h-screen h-dvh-safe max-w-full object-contain'} w-full h-full"
 				src={asset[0]}
